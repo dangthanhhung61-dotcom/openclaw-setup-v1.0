@@ -202,7 +202,7 @@
     // plugin still only reacts to messages that address the bot, since non-addressed ones
     // are buffered as passive context before the reaction step.
     if (isZaloPersonal(channelKey)) {
-      cfg.messages = { ackReaction: '🦞', ackReactionScope: 'all', removeAckAfterReply: false };
+      cfg.messages = { ackReaction: '🦞', ackReactionScope: 'all' };
     }
 
     // ── commands ──────────────────────────────────────────────────────────────

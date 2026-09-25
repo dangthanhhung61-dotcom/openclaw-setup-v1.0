@@ -1,5 +1,27 @@
 # Changelog (English)
 
+## [5.16.12] — 2026-09-26
+
+- Docker startup now removes only a stale foreground `gateway-owner/global` lease whose recorded hostname belongs to the previous container. This prevents OpenClaw 2026.9.6 from crash-looping until its five-minute lease TTL expires after a Compose recreate.
+- Zalo QR readiness now uses the Gateway health endpoint plus the installed plugin folder, avoiding an extra `openclaw channels status` process and proceeding immediately once the healthy Gateway can serve login.
+
+## [5.16.11] — 2026-09-26
+
+- Removed the concurrent `openclaw devices approve` loop from the Docker entrypoint. On OpenClaw 2026.9.6, that background CLI invocation can acquire the state-lifecycle lease before the Gateway and cause an `Another Gateway owner lease is still active` restart loop.
+- Preserved the Zalo Connect install and lifecycle patch before Gateway startup, so Zalo QR no longer waits on a Gateway that cannot become ready.
+
+## [5.16.10] — 2026-09-26
+
+- Fixed Docker Zalo bot creation so the generated entrypoint always includes the `zalo-connect` installation step instead of leaving a configured channel without its plugin.
+- Existing projects now detect a missing plugin immediately instead of waiting 180 seconds, then stop the Gateway cleanly and install offline to avoid `another OpenClaw process owns state-lifecycle`.
+- QR generation now stops with a clear readiness error if repair cannot load the channel instead of launching three login attempts that must fail.
+
+## [5.16.9] — 2026-09-25
+
+- Updated the pinned OpenClaw release from `2026.9.4` to `2026.9.6` for both Docker and Native installs.
+- Stopped generating `messages.removeAckAfterReply`, which OpenClaw 2026.9.6 removed from its strict configuration schema.
+- Removed the legacy Zalo field before plugin commands or gateway startup so existing Docker and Native projects upgrade safely.
+
 ## [5.16.8] — 2026-09-19
 
 - Removed personal Zalo/Facebook/Telegram links and donation controls from Setup while retaining all bot channel features.

@@ -57,6 +57,82 @@ function harness(tree, cfg = config(), native = false) {
 }
 
 for (const tree of ['src', 'dist']) {
+  test(`${tree}: missing Docker plugin is detected without a 180s timeout`, async () => {
+    const source = readFileSync(new URL(`${tree}/server/local-server.js`, root), 'utf8');
+    const match = source.match(/async function waitForGatewayZaloReady\([^\n]*\) \{[\s\S]*?\n\}/);
+    assert.ok(match);
+    const calls = [];
+    const logs = [];
+    const context = vm.createContext({
+      sendLog: line => logs.push(line),
+      waitForDockerContainer: async () => true,
+      runCapture: async (_, args) => {
+        calls.push(args);
+        if (args.includes('-e')) return { stdout: 'READY', stderr: '' };
+        return { stdout: 'MISSING', stderr: '' };
+      },
+    });
+    vm.runInContext(match[0], context);
+    assert.equal(await context.waitForGatewayZaloReady('openclaw-bot', projectDir, 180000), false);
+    assert.equal(calls.length, 2);
+    assert.ok(logs.some(line => line.includes('Plugin folder is missing')));
+  });
+
+  test(`${tree}: healthy Docker gateway with the plugin folder starts login without a channel-status CLI`, async () => {
+    const source = readFileSync(new URL(`${tree}/server/local-server.js`, root), 'utf8');
+    const match = source.match(/async function waitForGatewayZaloReady\([^\n]*\) \{[\s\S]*?\n\}/);
+    assert.ok(match);
+    const calls = [];
+    const context = vm.createContext({
+      sendLog: () => {},
+      waitForDockerContainer: async () => true,
+      runCapture: async (_, args) => {
+        calls.push(args);
+        return { stdout: args.includes('-e') ? 'READY' : 'OK', stderr: '' };
+      },
+    });
+    vm.runInContext(match[0], context);
+    assert.equal(await context.waitForGatewayZaloReady('openclaw-bot', projectDir, 180000), true);
+    assert.equal(calls.length, 2);
+    assert.equal(calls.some(args => args.includes('channels status 2>&1 || true')), false);
+  });
+
+  test(`${tree}: Docker plugin repair stops the gateway before offline install`, async () => {
+    const source = readFileSync(new URL(`${tree}/server/local-server.js`, root), 'utf8');
+    const match = source.match(/async function installDockerZaloPluginOffline\([^\n]*\) \{[\s\S]*?\n\}/);
+    assert.ok(match);
+    const calls = [];
+    const context = vm.createContext({
+      join,
+      ZALO_CONNECT_PLUGIN_SPEC: 'clawhub:openclaw-zalo-connect',
+      LEGACY_CLAWHUB_FLAG: '--acknowledge-clawhub-risk',
+      getBotServiceName: () => 'ai-bot',
+      sendLog: () => {},
+      httpError: (status, message) => Object.assign(new Error(message), { status }),
+      waitForDockerContainer: async () => true,
+      run: async (_, args) => { calls.push(['run', ...args]); },
+      runCapture: async (_, args) => {
+        calls.push(['capture', ...args]);
+        return args.includes('run') ? { code: 0, stdout: 'Installed plugin', stderr: '' } : { code: 0, stdout: 'OK', stderr: '' };
+      },
+    });
+    vm.runInContext(match[0], context);
+    await context.installDockerZaloPluginOffline(projectDir, 'openclaw-bot');
+    const stopAt = calls.findIndex(call => call.includes('stop'));
+    const installAt = calls.findIndex(call => call[0] === 'capture' && call.includes('run'));
+    const startAt = calls.findIndex(call => call.includes('up'));
+    assert.ok(stopAt >= 0 && stopAt < installAt && installAt < startAt);
+    assert.ok(calls[installAt].includes('--no-deps'));
+    assert.ok(calls[installAt].includes('--entrypoint'));
+    assert.equal(calls[installAt].includes('exec'), false);
+  });
+
+  test(`${tree}: first Zalo bot forces a backend-aware Docker infra refresh`, () => {
+    const source = readFileSync(new URL(`${tree}/server/local-server.js`, root), 'utf8');
+    assert.match(source, /syncDockerInfra\(projectDir, true, 'zalo-connect'\)/);
+    assert.match(source, /async function syncDockerInfra\(projectDir, force = false, zaloBackendOverride = ''\)/);
+  });
+
   for (const native of [false, true]) {
     const label = `${tree}/${native ? 'native' : 'docker'}`;
     test(`${label}: selected agent and its account reach the CLI`, async () => {

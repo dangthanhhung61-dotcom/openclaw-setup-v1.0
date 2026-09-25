@@ -15,9 +15,9 @@ function loadSharedModule(modulePath, globalName) {
 }
 const { buildWorkspaceFileMap, buildCronjobSkillMd, buildInfographicGeneratorSkillMd, buildInfographicGeneratorJs } = loadSharedModule('../setup/shared/workspace-gen.js', '__openclawWorkspace');
 const { buildOpenclawJson, buildEnvFileContent, buildExecApprovalsJson, buildZaloConnectChannelConfig } = loadSharedModule('../setup/shared/bot-config-gen.js', '__openclawBotConfig');
-const { buildDockerArtifacts, contextDefaultsScript, routerAuthDefaultsScript } = loadSharedModule('../setup/shared/docker-gen.js', '__openclawDockerGen');
-const { HOST_UI_PS1, HOST_UI_PS1_VERSION } = loadSharedModule('../setup/shared/host-ui-ps1.js', '__openclawHostUiPs1');
 const { OPENCLAW_NPM_SPEC, NINE_ROUTER_NPM_SPEC, ZALO_CHANNEL_ID, ZALO_PLUGIN_ID, ZALO_CONNECT_VERSION, ZALO_CONNECT_PLUGIN_SPEC, buildZaloLifecyclePatchScript, build9RouterProviderConfig, get9RouterBaseUrl } = loadSharedModule('../setup/shared/common-gen.js', '__openclawCommon');
+const { buildDockerArtifacts, openClaw96ConfigScript, contextDefaultsScript, routerAuthDefaultsScript } = loadSharedModule('../setup/shared/docker-gen.js', '__openclawDockerGen');
+const { HOST_UI_PS1, HOST_UI_PS1_VERSION } = loadSharedModule('../setup/shared/host-ui-ps1.js', '__openclawHostUiPs1');
 const dataExport = loadSharedModule('../setup/data/index.js', '__openclawData');
 
 // Chrome 136+ ignores --remote-debugging-port when --user-data-dir is the default profile
@@ -37,7 +37,7 @@ const CHROME_PROFILE_CACHE_DIRS = [
   'extensions_crx_cache', 'optimization_guide_model_store', 'blob_storage',
 ];
 
-// Match the Node.js engine range published by openclaw@2026.9.4.
+// Match the Node.js engine range published by openclaw@2026.9.6.
 function nodeVersionSupported(version) {
   const match = String(version || '').match(/^v?(\d+)\.(\d+)\.(\d+)$/);
   if (!match) return false;
@@ -2335,11 +2335,7 @@ function stripCliWarnings(text = '') {
   return kept.join('\n');
 }
 
-// Both keywords are load-bearing, and callers must not narrow them to the id alone: `channels
-// status` lists a loaded channel by its DISPLAY NAME ("OpenClaw Zalo Connect default: enabled, …"),
-// so the hyphenated id shows up only in the stale-config warnings stripCliWarnings now removes.
-// Match on the id alone and the check can never pass once the plugin is actually installed.
-async function waitForGatewayZaloReady(botContainer, projectDir, timeoutMs = 90000, channelKeywords = ['zalo-connect', 'openclaw zalo connect']) {
+async function waitForGatewayZaloReady(botContainer, projectDir, timeoutMs = 90000) {
   const started = Date.now();
   // Use dynamic port from env: OPENCLAW_GATEWAY_PORT → OPENCLAW_PORT → fallback 18789
   const healthScript = 'const http=require("http");const port=process.env.OPENCLAW_GATEWAY_PORT||process.env.OPENCLAW_PORT||18789;const r=http.get("http://127.0.0.1:"+port+"/health",{timeout:2000},(res)=>{let d="";res.on("data",c=>d+=c);res.on("end",()=>{try{const j=JSON.parse(d);process.stdout.write(j.ok?"READY":"WAIT")}catch{process.stdout.write("WAIT")}})});r.on("error",()=>process.stdout.write("WAIT"));r.on("timeout",()=>{r.destroy();process.stdout.write("WAIT")})';
@@ -2352,13 +2348,16 @@ async function waitForGatewayZaloReady(botContainer, projectDir, timeoutMs = 900
       const out = await runCapture('docker', ['exec', botContainer, 'node', '-e', healthScript], { cwd: projectDir, shell: false });
       const status = String(out.stdout || '').trim();
       if (status === 'READY') {
-        const pluginCheck = await runCapture('docker', ['exec', botContainer, 'sh', '-c', 'openclaw channels status 2>&1 || true'], { cwd: projectDir, shell: false });
-        const output = stripCliWarnings((pluginCheck.stdout || '') + '\n' + (pluginCheck.stderr || '')).toLowerCase();
-        if (channelKeywords.some((kw) => output.includes(kw))) {
+        const folder = await runCapture('docker', ['exec', botContainer, 'sh', '-lc', '[ -d "${OPENCLAW_HOME:-/home/node/project/.openclaw}/extensions/zalo-connect" ] && echo OK || echo MISSING'], { cwd: projectDir, shell: false }).catch(() => ({ stdout: 'ERR' }));
+        if (String(folder.stdout || '').trim() === 'MISSING') {
+          sendLog('[zalo-connect] Plugin folder is missing — repairing before waiting for the channel.');
+          return false;
+        }
+        if (String(folder.stdout || '').trim() === 'OK') {
           ready = true;
           break;
         }
-        if (attempts > 2) sendLog('[zalo-connect] Gateway healthy but Zalo Connect is not loaded yet (' + Math.round((Date.now() - started) / 1000) + 's)...');
+        if (attempts > 2) sendLog('[zalo-connect] Gateway healthy but the plugin folder could not be verified yet (' + Math.round((Date.now() - started) / 1000) + 's)...');
       } else {
         if (attempts > 2 && attempts % 3 === 0) sendLog('[zalo-connect] Waiting for gateway... (' + Math.round((Date.now() - started) / 1000) + 's)');
       }
@@ -2366,9 +2365,38 @@ async function waitForGatewayZaloReady(botContainer, projectDir, timeoutMs = 900
     await new Promise((r) => setTimeout(r, 5000));
   }
   if (!ready) {
-    sendLog('[zalo-connect] Gateway readiness timeout after ' + Math.round(timeoutMs / 1000) + 's — proceeding anyway.');
+    sendLog('[zalo-connect] Gateway readiness timeout after ' + Math.round(timeoutMs / 1000) + 's.');
   }
   return ready;
+}
+
+async function installDockerZaloPluginOffline(projectDir, botContainer) {
+  const composeFile = join(projectDir, 'docker', 'openclaw', 'docker-compose.yml');
+  const serviceName = getBotServiceName(projectDir);
+  const installCmd = `cd /home/node/project && (openclaw plugins install ${ZALO_CONNECT_PLUGIN_SPEC} --force --accept-capabilities || openclaw plugins install ${ZALO_CONNECT_PLUGIN_SPEC} --force ${LEGACY_CLAWHUB_FLAG}) 2>&1`;
+  sendLog(`[zalo-connect] Stopping ${botContainer} briefly to install the plugin without state-lifecycle contention...`);
+  await run('docker', ['compose', '-f', composeFile, 'stop', serviceName], { cwd: projectDir });
+  let installResult;
+  try {
+    installResult = await runCapture('docker', [
+      'compose', '-f', composeFile, 'run', '--rm', '--no-deps', '--entrypoint', 'sh',
+      serviceName, '-lc', installCmd,
+    ], { cwd: projectDir, shell: false, timeout: 300000 });
+    const output = `${installResult.stdout || ''}\n${installResult.stderr || ''}`;
+    for (const line of output.split(/\r?\n/).filter(Boolean)) sendLog(`[zalo-connect] ${line}`);
+  } finally {
+    await run('docker', ['compose', '-f', composeFile, 'up', '-d', serviceName], { cwd: projectDir });
+    await waitForDockerContainer(botContainer, 90000);
+  }
+  if (!installResult || installResult.code !== 0) {
+    throw httpError(500, 'Zalo Connect plugin installation failed while the gateway was stopped.');
+  }
+  const check = await runCapture('docker', ['exec', botContainer, 'sh', '-lc', '[ -d "${OPENCLAW_HOME:-/home/node/project/.openclaw}/extensions/zalo-connect" ] && echo OK || echo MISSING'], { cwd: projectDir, shell: false });
+  if (String(check.stdout || '').trim() !== 'OK') {
+    throw httpError(500, 'Zalo Connect plugin folder is still missing after installation.');
+  }
+  sendLog('[zalo-connect] Plugin installed safely; waiting for the channel to load...');
+  return true;
 }
 
 // Native equivalent of waitForGatewayZaloReady: no container to exec into, so probe the
@@ -2474,25 +2502,16 @@ async function startZaloConnectLogin(projectDir, accountId = 'default', agentId 
       // backend-aware entrypoint existed).
       const containerUp = await waitForDockerContainer(botContainer, 90000);
       if (!containerUp) sendLog(`[zalo-connect] ${botContainer} chưa chạy sau 90s — vẫn thử tiếp...`);
-      const gatewayReady = await waitForGatewayZaloReady(botContainer, projectDir, 180000);
+      let gatewayReady = await waitForGatewayZaloReady(botContainer, projectDir, 180000);
       if (!gatewayReady) {
         const check = await runCapture('docker', ['exec', botContainer, 'sh', '-lc', '[ -d "${OPENCLAW_HOME:-/home/node/project/.openclaw}/extensions/zalo-connect" ] && echo OK || echo MISSING'], { cwd: projectDir, shell: false }).catch(() => ({ stdout: 'ERR' }));
         if (String(check.stdout || '').trim() === 'MISSING') {
-          sendLog(`[zalo-connect] Plugin missing — installing ${ZALO_CONNECT_PLUGIN_SPEC}...`);
-          const installCmd = `cd /home/node/project && (openclaw plugins install ${ZALO_CONNECT_PLUGIN_SPEC} --force --accept-capabilities || openclaw plugins install ${ZALO_CONNECT_PLUGIN_SPEC} --force ${LEGACY_CLAWHUB_FLAG}) 2>&1`;
-          const inst = await runCapture('docker', ['exec', botContainer, 'sh', '-lc', installCmd], { cwd: projectDir, shell: false });
-          const instOut = `${inst.stdout}\n${inst.stderr}`;
-          for (const line of instOut.split(/\r?\n/).filter(Boolean)) sendLog(`[zalo-connect] ${line}`);
-          if (/installed plugin/i.test(instOut)) {
-            // Gateway must reload to pick the plugin up — safe here: the gateway is past
-            // its boot (we only reach this branch when it answered the exec above).
-            await restartDockerBotContainer(projectDir).catch((err) => sendLog(`[docker] restart skipped/failed: ${err.message}`));
-            await waitForGatewayZaloReady(botContainer, projectDir, 180000);
-          } else {
-            sendLog('[zalo-connect] Cài plugin không thành công — thử lại bằng nút "Đăng nhập Zalo" sau khi container ổn định.');
-          }
+          await syncDockerInfra(projectDir, true, 'zalo-connect').catch((err) => sendLog(`[sync] Zalo infra resync failed: ${err.message}`));
+          await installDockerZaloPluginOffline(projectDir, botContainer);
+          gatewayReady = await waitForGatewayZaloReady(botContainer, projectDir, 180000);
         }
       }
+      if (!gatewayReady) throw httpError(503, 'Zalo Connect plugin is installed but the channel did not become ready.');
     }
   } catch (err) {
     zaloLoginInFlight = false;
@@ -3011,7 +3030,7 @@ async function ocDaemon(projectDir, verb, extraArgs = []) {
  * migrate first, then boot on the upgraded config.
  */
 async function runNativeConfigMigrations(projectDir) {
-  const res = await runCapture(process.execPath, ['-e', contextDefaultsScript + '\n' + routerAuthDefaultsScript], {
+  const res = await runCapture(process.execPath, ['-e', openClaw96ConfigScript + '\n' + contextDefaultsScript + '\n' + routerAuthDefaultsScript], {
     cwd: projectDir,
     env: nativeEnv(projectDir),
     shell: false,
@@ -3622,7 +3641,7 @@ function getBotContainerName(projectDir) {
   return 'openclaw-bot';
 }
 
-async function syncDockerInfra(projectDir, force = false) {
+async function syncDockerInfra(projectDir, force = false, zaloBackendOverride = '') {
   const dockerDir = join(projectDir, 'docker', 'openclaw');
   if (!existsSync(join(dockerDir, 'docker-compose.yml'))) return false;
 
@@ -3660,11 +3679,13 @@ async function syncDockerInfra(projectDir, force = false) {
 
   // Detect the single supported personal-Zalo backend from openclaw.json.
   const cfgPath = join(projectDir, '.openclaw', 'openclaw.json');
-  let zaloBackend = '';
-  try {
-    const cfg = JSON.parse(await fsp.readFile(cfgPath, 'utf8'));
-    if (cfg.channels?.['zalo-connect']?.enabled) zaloBackend = 'zalo-connect';
-  } catch {}
+  let zaloBackend = zaloBackendOverride;
+  if (!zaloBackend) {
+    try {
+      const cfg = JSON.parse(await fsp.readFile(cfgPath, 'utf8'));
+      if (cfg.channels?.['zalo-connect']?.enabled) zaloBackend = 'zalo-connect';
+    } catch {}
+  }
 
   // Regenerate with detected settings
   const docker = buildDockerArtifacts({
@@ -3681,9 +3702,6 @@ async function syncDockerInfra(projectDir, force = false) {
     singleAppContainerName: botContainer,
     singleRouterContainerName: routerContainer,
     zaloBackend,
-    runtimeCommandParts: [
-      'while true; do sleep 5; openclaw devices approve --latest 2>/dev/null || true; done >/dev/null 2>&1 &',
-    ].filter(Boolean),
     plainSingleExtraHosts: true,
   });
 
@@ -7047,7 +7065,7 @@ async function handler(req, res, rootProjectDir) {
       // login flow has to install mid-boot and restart the container, which can
       // interrupt OpenClaw's first-run migrations and wedge its state lease.
       if (result.channel === 'zalo-personal') {
-        await syncDockerInfra(projectDir, true).catch((err) => sendLog(`[sync] infra resync failed: ${err.message}`));
+        await syncDockerInfra(projectDir, true, 'zalo-connect').catch((err) => sendLog(`[sync] infra resync failed: ${err.message}`));
       }
       await recreateDockerBot(projectDir).catch((err) => sendLog(`[docker] recreate skipped/failed: ${err.message}`));
       

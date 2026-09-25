@@ -16,6 +16,15 @@ for (const tree of ['src', 'dist']) {
   const match = source.match(/function patchZaloLifecycle\(spec\) \{[\s\S]*?\n  \}/);
   assert.ok(match, `${tree}: patch implementation exists`);
 
+  test(`${tree}: server loads common generator before Docker generator`, () => {
+    const serverSource = readFileSync(new URL(`${tree}/server/local-server.js`, root), 'utf8');
+    const commonIndex = serverSource.indexOf("../setup/shared/common-gen.js");
+    const dockerIndex = serverSource.indexOf("../setup/shared/docker-gen.js");
+    assert.ok(commonIndex >= 0, 'common generator import exists');
+    assert.ok(dockerIndex >= 0, 'Docker generator import exists');
+    assert.ok(commonIndex < dockerIndex, 'Docker generator sees common helpers during Node startup');
+  });
+
   test(`${tree}: version/hash guard, backup, idempotency`, () => {
     const home = mkdtempSync(join(tmpdir(), 'openclaw-zalo-patch-'));
     const plugin = join(home, 'extensions', 'zalo-connect');
@@ -64,7 +73,9 @@ for (const tree of ['src', 'dist']) {
     const artifacts = context.__openclawDockerGen.buildDockerArtifacts({
       is9Router: true, osChoice: 'win', zaloBackend: 'zalo-connect',
     });
+    assert.match(artifacts.entrypointScript, /ensure_plugin zalo-connect "clawhub:openclaw-zalo-connect"/);
     assert.ok(artifacts.entrypointScript.includes(common.buildZaloLifecyclePatchScript()));
+    assert.doesNotMatch(artifacts.entrypointScript, /openclaw devices approve/);
     assert.match(artifacts.entrypointScript, /duckduckgo_installed\(\)/);
     assert.match(artifacts.entrypointScript, /authHeader=true/);
     assert.equal(common.build9RouterProviderConfig().auth, 'api-key');

@@ -84,7 +84,7 @@ Bấm nút **Cập nhật** ở **góc trên bên phải giao diện Setup**. H�
 ## 📋 Yêu cầu hệ thống
 
 - **Node.js 24 LTS** (bắt buộc) — wizard Setup chạy bằng Node, nên cần cho **cả** chế độ Docker lẫn Native. [Tải Node.js](https://nodejs.org/).
-  OpenClaw được ghim ở **2026.9.4**, yêu cầu **Node.js 24.16.0+ (nhánh 24)** hoặc **26.1.0+**. Không hỗ trợ Node.js 22 và 25. Image Docker OpenClaw được sinh ra dùng `node:24-slim`.
+  OpenClaw được ghim ở **2026.9.6**, yêu cầu **Node.js 24.16.0+ (nhánh 24)** hoặc **26.1.0+**. Không hỗ trợ Node.js 22 và 25. Image Docker OpenClaw được sinh ra dùng `node:24-slim`.
 - **Git**: Đã cài đặt và có trong biến môi trường PATH.
 - **Docker Desktop** (khuyên dùng, để chạy bot): hỗ trợ Docker Compose V2. [Tải Docker](https://www.docker.com/products/docker-desktop/).
 - **Windows + Docker**: dùng backend WSL2; bật Developer Mode hoặc chạy terminal cài đặt bằng quyền Administrator để tạo liên kết `.openclaw` tới volume Linux.

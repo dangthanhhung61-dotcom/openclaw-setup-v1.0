@@ -17,6 +17,37 @@
     return String(text).split('\n').map((line) => `${prefix}${line}`).join('\n');
   }
 
+  function buildDockerGatewayLeaseCleanupScript() {
+    return `(() => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const stateDir = process.env.OPENCLAW_STATE_DIR || process.env.OPENCLAW_HOME || path.join(process.cwd(), '.openclaw');
+  const databasePath = path.join(stateDir, 'state', 'openclaw.sqlite');
+  if (!fs.existsSync(databasePath)) return;
+  let database;
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    database = new DatabaseSync(databasePath);
+    const row = database.prepare("SELECT owner, payload_json AS payloadJson FROM state_leases WHERE scope = 'gateway-owner' AND lease_key = 'global' LIMIT 1").get();
+    if (!row) return;
+    let payload;
+    try { payload = JSON.parse(row.payloadJson || 'null'); } catch { return; }
+    const previousHost = payload?.owner?.host;
+    const isForegroundGateway = payload?.mode === 'foreground' && payload?.supervisor === null;
+    if (!isForegroundGateway || typeof previousHost !== 'string' || !previousHost || previousHost === os.hostname()) return;
+    const removed = database.prepare("DELETE FROM state_leases WHERE scope = 'gateway-owner' AND lease_key = 'global' AND owner = ?").run(row.owner);
+    if (Number(removed.changes) > 0) console.log('[entrypoint] removed stale Gateway lease from previous Docker container ' + previousHost);
+  } catch (error) {
+    if (!/no such table: state_leases/i.test(String(error?.message || error))) {
+      console.log('[entrypoint] warning: could not inspect stale Gateway lease: ' + String(error?.message || error));
+    }
+  } finally {
+    try { database?.close(); } catch {}
+  }
+})();`;
+  }
+
   function build9RouterSmartRouteSyncScript() {
     // First-install auto-sync: đăng nhập 9router bằng MẬT KHẨU MẶC ĐỊNH 123456 (9router cấp),
     // gom model của các provider đang active → tạo combo 'smart-route' MỘT LẦN rồi DỪNG.
@@ -193,6 +224,10 @@ if(touched){console.log('[patch-9router] Applied Codex compatibility patch.');}e
   function buildGatewayPatchCmd() {
     return `node -e \\"const fs=require('fs'),os=require('os'),path=require('path'),p=path.join(process.cwd(),'.openclaw','openclaw.json');if(fs.existsSync(p)){const c=JSON.parse(fs.readFileSync(p,'utf8'));const gp=Number(process.env.OPENCLAW_GATEWAY_PORT||process.env.OPENCLAW_PORT)||c.gateway?.port||18789;const a=new Set(['http://localhost:'+gp,'http://127.0.0.1:'+gp,'http://0.0.0.0:'+gp]);for(const entries of Object.values(os.networkInterfaces()||{})){for(const entry of entries||[]){if(!entry||entry.internal||entry.family!=='IPv4'||!entry.address)continue;a.add('http://' + entry.address + ':'+gp);}}const p9=c.models&&c.models.providers&&c.models.providers['9router'];if(p9){p9.request=Object.assign({},p9.request,{allowPrivateNetwork:true});}c.tools=Object.assign({},c.tools,{profile:'full',exec:{host:'gateway',security:'full',ask:'off'}});c.gateway=Object.assign({},c.gateway,{port:gp,bind:'custom',customBindHost:'0.0.0.0',controlUi:Object.assign({},c.gateway?.controlUi,{allowedOrigins:Array.from(a).filter(Boolean)})});fs.writeFileSync(p,JSON.stringify(c,null,2));}\\"`;
   }
+
+  // OpenClaw 2026.9.6 removed this Zalo acknowledgement option from its strict schema.
+  // Run this before any OpenClaw CLI command so upgrades can install plugins and boot cleanly.
+  const openClaw96ConfigScript = `(function(){const fs=require('fs'),path=require('path'),p=path.join(process.cwd(),'.openclaw','openclaw.json');if(!fs.existsSync(p))return;const c=JSON.parse(fs.readFileSync(p,'utf8'));if(!c.messages||c.messages.removeAckAfterReply===undefined)return;delete c.messages.removeAckAfterReply;fs.writeFileSync(p,JSON.stringify(c,null,2));})();`;
 
   // Idempotent config upgrade replayed on every runtime start. Docker embeds it in the container
   // entrypoint; the native runtime (local-server.js) runs it via `node -e` before every gateway
@@ -380,6 +415,7 @@ if(touched){console.log('[patch-9router] Applied Codex compatibility patch.');}e
       'echo "[entrypoint] ensuring runtime assets, then starting gateway"',
     ];
     runtimeParts.unshift(...runtimePrelude);
+    runtimeParts.unshift(`node - <<'NODE'\n${openClaw96ConfigScript}\nNODE`);
     // Backup config BEFORE plugin installs (runtimeCommandParts may contain plugin install commands)
     runtimeParts.unshift(`node - <<'NODE'\n${backupConfigScript}\nNODE`);
     // Restore config AFTER plugin installs (which may clobber openclaw.json)
@@ -521,6 +557,12 @@ if(touched){console.log('[patch-9router] Applied Codex compatibility patch.');}e
       '  printf %s "$OC_VER" > "$OC_VER_MARKER" || true',
       'fi',
     ].join('\n'));
+    // A Compose recreate changes the container hostname. OpenClaw 2026.9.6 cannot prove that
+    // the old hostname/PID is dead, so its persisted foreground Gateway lease survives until
+    // the five-minute TTL expires and the new container crash-loops. This runs before the only
+    // Gateway in this generated service starts and removes only that exact stale cross-container
+    // owner row; same-container and externally supervised leases are left untouched.
+    runtimeParts.push(`node - <<'NODE'\n${buildDockerGatewayLeaseCleanupScript()}\nNODE`);
     runtimeParts.push('openclaw gateway run');
     const runtimeScript = ['#!/bin/sh', 'set -e', ...runtimeParts].join('\n');
     let browserInstall = '';
@@ -772,7 +814,9 @@ ${appEnvironmentBlock}${plainSingleExtraHosts ? `${extraHostsBlock}\n` : ''}    
     build9RouterPatchScript,
     build9RouterComposeEntrypointScript,
     buildGatewayPatchCmd,
+    buildDockerGatewayLeaseCleanupScript,
     buildDockerArtifacts,
+    openClaw96ConfigScript,
     contextDefaultsScript,
     routerAuthDefaultsScript,
   };

@@ -6,7 +6,7 @@ import vm from 'node:vm';
 
 const projectRoot = new URL('../', import.meta.url);
 const source = (path) => readFileSync(new URL(path, projectRoot), 'utf8');
-const expectedSpec = 'openclaw@2026.9.4';
+const expectedSpec = 'openclaw@2026.9.6';
 const boundaryCases = [
   ['v22.22.3', false], ['v23.11.0', false],
   ['v24.0.0', false], ['v24.15.99', false],
@@ -52,6 +52,39 @@ for (const tree of ['src', 'dist']) {
         }
       }
     }
+  });
+
+  test(`${tree}: Docker startup reclaims only a stale lease from a previous container`, () => {
+    const context = vm.createContext({ Buffer });
+    vm.runInContext(source(`${tree}/setup/shared/common-gen.js`), context);
+    vm.runInContext(source(`${tree}/setup/shared/docker-gen.js`), context);
+    const script = context.__openclawDockerGen.buildDockerGatewayLeaseCleanupScript();
+    const run = ({ host, mode = 'foreground', supervisor = null }) => {
+      const deletes = [], logs = [];
+      class DatabaseSync {
+        prepare(sql) {
+          if (sql.startsWith('SELECT')) return { get: () => ({ owner: 'lease-owner', payloadJson: JSON.stringify({ owner: { host }, mode, supervisor }) }) };
+          return { run: owner => { deletes.push(owner); return { changes: 1 }; } };
+        }
+        close() {}
+      }
+      vm.runInNewContext(script, {
+        process: { env: { OPENCLAW_STATE_DIR: '/state' }, cwd: () => '/project' },
+        console: { log: line => logs.push(line) },
+        require: id => ({
+          'node:fs': { existsSync: () => true },
+          'node:os': { hostname: () => 'current-container' },
+          'node:path': path.posix,
+          'node:sqlite': { DatabaseSync },
+        })[id],
+      });
+      return { deletes, logs };
+    };
+    assert.deepEqual(run({ host: 'previous-container' }).deletes, ['lease-owner']);
+    assert.deepEqual(run({ host: 'current-container' }).deletes, []);
+    assert.deepEqual(run({ host: 'previous-container', mode: 'supervised', supervisor: { kind: 'external' } }).deletes, []);
+    const artifacts = context.__openclawDockerGen.buildDockerArtifacts({ openClawNpmSpec: expectedSpec, osChoice: 'win' });
+    assert.ok(artifacts.entrypointScript.indexOf('removed stale Gateway lease') < artifacts.entrypointScript.indexOf('openclaw gateway run'));
   });
 
   test(`${tree}: old Windows projects retain their bind mount during infra updates`, () => {
@@ -151,6 +184,46 @@ for (const tree of ['src', 'dist']) {
       assert.equal(cfg.unrelated.kept, true);
     }
   });
+  test(`${tree}: OpenClaw 2026.9.6 Zalo config stays schema-compatible`, () => {
+    const context = vm.createContext({ Buffer });
+    vm.runInContext(source(`${tree}/setup/shared/common-gen.js`), context);
+    vm.runInContext(source(`${tree}/setup/shared/bot-config-gen.js`), context);
+    vm.runInContext(source(`${tree}/setup/shared/docker-gen.js`), context);
+
+    const generated = context.__openclawBotConfig.buildOpenclawJson({
+      channelKey: 'zalo-personal',
+      providerKey: '9router',
+      model: 'smart-route',
+      agentMetas: [{ agentId: 'main', name: 'Main', accountId: 'default' }],
+    });
+    assert.equal(generated.messages.ackReaction, '🦞');
+    assert.equal(generated.messages.ackReactionScope, 'all');
+    assert.equal(Object.hasOwn(generated.messages, 'removeAckAfterReply'), false);
+
+    let cfg = { messages: { ackReaction: '🦞', ackReactionScope: 'all', removeAckAfterReply: false }, unrelated: { kept: true } };
+    let writes = 0;
+    const fs = {
+      existsSync: () => true,
+      readFileSync: () => JSON.stringify(cfg),
+      writeFileSync: (_, value) => { cfg = JSON.parse(value); writes += 1; },
+    };
+    const migration = context.__openclawDockerGen.openClaw96ConfigScript;
+    const migrationContext = { require: id => id === 'fs' ? fs : path, process: { cwd: () => '/project' } };
+    vm.runInNewContext(migration, migrationContext);
+    assert.equal(Object.hasOwn(cfg.messages, 'removeAckAfterReply'), false);
+    assert.equal(cfg.unrelated.kept, true);
+    vm.runInNewContext(migration, migrationContext);
+    assert.equal(writes, 1, 'migration should be idempotent');
+
+    const artifacts = context.__openclawDockerGen.buildDockerArtifacts({
+      openClawNpmSpec: expectedSpec, osChoice: 'win', is9Router: true,
+    });
+    const backupAt = artifacts.entrypointScript.indexOf('.openclaw-config-backup.json');
+    const migrationAt = artifacts.entrypointScript.indexOf('removeAckAfterReply');
+    const pluginCliAt = artifacts.entrypointScript.indexOf('ensure_plugin()');
+    assert.ok(backupAt >= 0 && backupAt < migrationAt);
+    assert.ok(migrationAt < pluginCliAt, 'schema migration must run before OpenClaw plugin commands');
+  });
   test(`${tree}: unsupported Node stops before mutations; 9router update is unchanged`, async () => {
     const server = source(`${tree}/server/local-server.js`);
     const names = ['nodeVersionSupported', 'assertOpenclawNodeVersion', 'installCore', 'updateRuntime'];
@@ -183,8 +256,8 @@ for (const tree of ['src', 'dist']) {
 }
 
 test('edited source and distributed files remain identical', () => {
-  for (const path of ['setup/shared/common-gen.js', 'setup/shared/docker-gen.js', 'server/local-server.js']) {
+  for (const path of ['setup/shared/common-gen.js', 'setup/shared/bot-config-gen.js', 'setup/shared/docker-gen.js', 'server/local-server.js']) {
     assert.equal(source(`src/${path}`).replace(/\r\n/g, '\n'), source(`dist/${path}`).replace(/\r\n/g, '\n'), path);
   }
-  assert.equal(JSON.parse(source('package.json')).version, '5.16.8');
+  assert.equal(JSON.parse(source('package.json')).version, '5.16.12');
 });

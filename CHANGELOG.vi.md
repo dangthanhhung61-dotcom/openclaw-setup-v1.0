@@ -1,5 +1,27 @@
 # Changelog (Tiếng Việt)
 
+## [5.16.12] — 2026-09-26
+
+- Khi Docker khởi động, Setup chỉ xóa lease `gateway-owner/global` dạng foreground còn sót lại nếu hostname thuộc container cũ. OpenClaw 2026.9.6 không còn crash-loop cho đến khi lease TTL 5 phút hết hạn sau mỗi lần Compose recreate.
+- Kiểm tra sẵn sàng cho QR Zalo nay chỉ dùng health của Gateway và thư mục plugin đã cài, không tạo thêm tiến trình `openclaw channels status`; đăng nhập bắt đầu ngay khi Gateway khỏe.
+
+## [5.16.11] — 2026-09-26
+
+- Không còn chạy `openclaw devices approve` song song trong entrypoint Docker. Với OpenClaw 2026.9.6, lệnh CLI nền có thể chiếm state-lifecycle lease trước Gateway và gây vòng lặp `Another Gateway owner lease is still active`.
+- Bảo toàn bước cài plugin và vá vòng đời `zalo-connect` trước khi Gateway khởi động, nên QR Zalo không còn bị kẹt vì Gateway không thể sẵn sàng.
+
+## [5.16.10] — 2026-09-26
+
+- Sửa luồng tạo bot Zalo Docker để luôn sinh lại entrypoint có bước cài `zalo-connect`, không còn cấu hình kênh nhưng thiếu plugin.
+- Khi gặp project cũ thiếu plugin, Setup phát hiện ngay thay vì chờ 180 giây; Gateway được dừng có kiểm soát trước khi cài plugin ngoại tuyến để tránh lỗi `another OpenClaw process owns state-lifecycle`.
+- Nếu plugin không sẵn sàng sau sửa chữa, dừng rõ ràng trước bước tạo QR thay vì tiếp tục chạy ba lượt đăng nhập chắc chắn thất bại.
+
+## [5.16.9] — 2026-09-25
+
+- Nâng bản OpenClaw được ghim từ `2026.9.4` lên `2026.9.6` cho cả cài Docker và Native.
+- Không còn sinh `messages.removeAckAfterReply`, trường đã bị OpenClaw 2026.9.6 loại khỏi schema nghiêm ngặt.
+- Tự dọn trường Zalo cũ trước khi chạy lệnh plugin hay khởi động gateway, áp dụng cho cả project Docker và Native đang nâng cấp.
+
 ## [5.16.8] — 2026-09-19
 
 - Gỡ thông tin liên hệ cá nhân Zalo/Facebook/Telegram và phần ủng hộ khỏi giao diện Setup; giữ nguyên các chức năng bot Zalo, Facebook Messenger và Telegram.

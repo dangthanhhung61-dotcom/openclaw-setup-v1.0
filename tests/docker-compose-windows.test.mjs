@@ -16,7 +16,7 @@ for (const tree of ['src', 'dist']) {
     for (const isMultiBot of [false, true]) {
       for (const provider of ['9router', 'local', 'direct']) {
         const artifacts = context.__openclawDockerGen.buildDockerArtifacts({
-          openClawNpmSpec: 'openclaw@2026.9.4', osChoice: 'win', isMultiBot,
+          openClawNpmSpec: 'openclaw@2026.9.6', osChoice: 'win', isMultiBot,
           is9Router: provider === '9router', isLocal: provider === 'local',
         });
         // `docker compose config` only parses Compose; no container is started.
