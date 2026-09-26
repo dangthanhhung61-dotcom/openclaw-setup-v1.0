@@ -1,5 +1,10 @@
 # Changelog (Tiếng Việt)
 
+## [5.16.13] — 2026-09-27
+
+- Chức năng **Cấp quyền ổ đĩa** nay nhận cả named volume `openclaw-home` của project Docker Windows mới và bind mount `.openclaw` của project cũ; mount được ghi theo long-form YAML an toàn cho đường dẫn Windows có ký tự ổ đĩa hoặc khoảng trắng.
+- Bổ sung kiểm thử hồi quy cho cả hai cấu trúc `docker-compose.yml` trong mã nguồn và bản phân phối.
+
 ## [5.16.12] — 2026-09-26
 
 - Khi Docker khởi động, Setup chỉ xóa lease `gateway-owner/global` dạng foreground còn sót lại nếu hostname thuộc container cũ. OpenClaw 2026.9.6 không còn crash-loop cho đến khi lease TTL 5 phút hết hạn sau mỗi lần Compose recreate.

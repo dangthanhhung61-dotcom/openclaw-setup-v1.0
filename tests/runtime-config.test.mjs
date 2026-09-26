@@ -100,6 +100,43 @@ for (const tree of ['src', 'dist']) {
     assert.doesNotMatch(artifacts.compose, /openclaw-home:/);
   });
 
+  test(`${tree}: disk grants support named-volume and legacy bind Compose layouts`, async () => {
+    const server = source(`${tree}/server/local-server.js`);
+    const helperStart = server.indexOf('function injectMountsIntoCompose(');
+    const helperEnd = server.indexOf('// Sync a managed "granted mounts" block', helperStart);
+    assert.ok(helperStart >= 0 && helperEnd > helperStart);
+    const helpers = server.slice(helperStart, helperEnd);
+    const layouts = [
+      '      - openclaw-home:/home/node/project/.openclaw',
+      '      - ../../.openclaw:/home/node/project/.openclaw',
+    ];
+
+    for (const homeMount of layouts) {
+      const original = `services:\n  ai-bot:\n    volumes:\n${homeMount}\n      - ../../:/mnt/project\n`;
+      let written = '';
+      const context = vm.createContext({
+        join: path.win32.join,
+        existsSync: () => true,
+        fsp: {
+          readFile: async () => original,
+          writeFile: async (_file, value) => { written = value; },
+        },
+        httpError: (status, message) => Object.assign(new Error(message), { status }),
+        sendLog: () => {},
+        updateGrantedMountsInAgents: async () => {},
+        recreateDockerBot: async () => true,
+      });
+      vm.runInContext(helpers, context);
+      const result = await context.addBotMount('D:\\bot', 'E:\\Team Data\\', 'shared');
+
+      assert.equal(result.target, '/mnt/shared');
+      assert.equal(result.applied, true);
+      assert.match(written, /- type: bind\n\s+source: 'E:\/Team Data'\n\s+target: \/mnt\/shared/);
+      assert.ok(written.indexOf(homeMount) < written.indexOf('target: /mnt/shared'));
+      assert.ok(written.indexOf('target: /mnt/shared') < written.indexOf('- ../../:/mnt/project'));
+    }
+  });
+
   test(`${tree}: Windows volume setup refuses to overwrite an existing home`, async () => {
     const server = source(`${tree}/server/local-server.js`);
     const helper = server.match(/async function prepareWindowsDockerHome\(projectDir\) \{[\s\S]*?\n\}/);
@@ -259,5 +296,5 @@ test('edited source and distributed files remain identical', () => {
   for (const path of ['setup/shared/common-gen.js', 'setup/shared/bot-config-gen.js', 'setup/shared/docker-gen.js', 'server/local-server.js']) {
     assert.equal(source(`src/${path}`).replace(/\r\n/g, '\n'), source(`dist/${path}`).replace(/\r\n/g, '\n'), path);
   }
-  assert.equal(JSON.parse(source('package.json')).version, '5.16.12');
+  assert.equal(JSON.parse(source('package.json')).version, '5.16.13');
 });

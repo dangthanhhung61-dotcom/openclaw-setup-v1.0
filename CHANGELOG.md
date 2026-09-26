@@ -1,5 +1,10 @@
 # Changelog (English)
 
+## [5.16.13] — 2026-09-27
+
+- **Grant disk access** now supports both the `openclaw-home` named volume used by new Windows Docker projects and the legacy `.openclaw` bind mount; grants use long-form YAML so Windows drive letters and spaces remain unambiguous.
+- Added regression coverage for both `docker-compose.yml` layouts in source and distribution builds.
+
 ## [5.16.12] — 2026-09-26
 
 - Docker startup now removes only a stale foreground `gateway-owner/global` lease whose recorded hostname belongs to the previous container. This prevents OpenClaw 2026.9.6 from crash-looping until its five-minute lease TTL expires after a Compose recreate.

@@ -3909,14 +3909,11 @@ async function addBotMount(projectDir, hostPath, mountName = '') {
   if (compose.includes(`target: ${target}`) || compose.includes(`:${target}"`) || compose.includes(`:${target}\n`) || compose.includes(cleanPath)) {
     return { ok: true, target, hostPath: cleanPath, alreadyMounted: true };
   }
-  // Long-form bind mount: unambiguous across OSes. Short syntax `host:container` breaks on
-  // Windows because the drive-letter colon (C:/...) collides with the host:container separator.
-  // Source is single-quoted YAML (literal) so paths with spaces are safe.
-  const src = `'${cleanPath.replace(/'/g, "''")}'`;
-  const mountBlock = `      - type: bind\n        source: ${src}\n        target: ${target}`;
-  const anchor = /^(\s*-\s*\.\.\/\.\.\/\.openclaw:\/home\/node\/project\/\.openclaw)\s*$/m;
-  if (!anchor.test(compose)) throw httpError(500, 'Không định vị được block volumes của bot trong docker-compose.yml');
-  compose = compose.replace(anchor, `$1\n${mountBlock}`);
+  // Reuse the same mount injector used during Compose regeneration so fresh Windows projects
+  // (named `openclaw-home` volume) and legacy bind-mounted projects accept disk grants equally.
+  const updatedCompose = injectMountsIntoCompose(compose, [{ host: cleanPath, target }]);
+  if (updatedCompose === compose) throw httpError(500, 'Không định vị được block volumes của bot trong docker-compose.yml');
+  compose = updatedCompose;
   await fsp.writeFile(composeFile, compose, 'utf8');
   sendLog(`[mount] Đã thêm mount ${cleanPath} -> ${target} (long-form bind) vào docker-compose.yml`);
   await updateGrantedMountsInAgents(projectDir).catch((e) => sendLog(`[mount] Cập nhật AGENTS.md bỏ qua: ${e.message}`));
